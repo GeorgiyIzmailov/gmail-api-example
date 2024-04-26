@@ -4,8 +4,51 @@ const process = require("process");
 const { authenticate } = require("@google-cloud/local-auth");
 const { google } = require("googleapis");
 
+require("dotenv").config();
+
+const url = "https://api.inkeep.com/v0/chat_sessions/chat_results";
+
+// function for get response from our AI
+const getResponseFromAI = async (emailBody) => {
+  const integrationId = process.env.INKEEP_INTEGRATION_ID;
+  const apiKey = process.env.INKEEP_API_KEY;
+
+  if (!apiKey || !integrationId) {
+    console.error("not found api key or integration id");
+  }
+
+  const data = {
+    integration_id: integrationId,
+    chat_session: {
+      messages: [
+        {
+          role: "user",
+          content: "Why Inkeep?",
+        },
+      ],
+    },
+  };
+
+  const options = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(data),
+  };
+
+  const response = await fetch(url, options);
+  const responseFromAIMessage = await response.json();
+
+  return responseFromAIMessage.message.content;
+};
+
 // If modifying these scopes, delete token.json.
-const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
+const SCOPES = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.send",
+];
 // The file token.json stores the user's access and refresh tokens, and is
 // created automatically when the authorization flow completes for the first
 // time.
@@ -70,20 +113,55 @@ async function authorize() {
  *
  * @param {google.auth.OAuth2} auth An authorized OAuth2 client.
  */
-async function listLabels(auth) {
+async function startListener(auth) {
+  // gmail api initialization
   const gmail = google.gmail({ version: "v1", auth });
-  const res = await gmail.users.labels.list({
+
+  // track changes through the Pub/Sub service
+  // const res = await gmail.users.watch({
+  //   userId: "me",
+  //   requestBody: {
+  //     topicName: "projects/alert-rush-420508/topics/GmailMyTestTopic",
+  //   },
+  // });
+
+  // list all emails:
+  // const res = await gmail.users.messages.list({
+  //   userId: "me",
+  //   labelIds: ["INBOX"],
+  // });
+  // const messages = res.data.messages;
+ 
+  // get email by id
+  // const msg = await gmail.users.messages.get({
+  //   userId: "me",
+  //   id: "18f1a7dceabefae8",
+  // });
+
+  // get response from out AI 
+  const responseFromAI = await getResponseFromAI();
+
+  // test options for email
+  const emailLines = [
+    "From: georgiy-izmailov-v@inkeep.ai",
+    "To: georgiy-izmailov-v@inkeep.com",
+    "Content-type: text/html;charset=iso-8859-1",
+    "MIME-Version: 1.0",
+    "Subject: Test Subject",
+    "",
+    `${responseFromAI}`,
+  ];
+
+  const email = emailLines.join("\r\n").trim();
+  const base64Email = Buffer.from(email).toString("base64");
+
+  // send email
+  const res = await gmail.users.messages.send({
     userId: "me",
-  });
-  const labels = res.data.labels;
-  if (!labels || labels.length === 0) {
-    console.log("No labels found.");
-    return;
-  }
-  console.log("Labels:");
-  labels.forEach((label) => {
-    console.log(`- ${label.name}`);
+    requestBody: {
+      raw: base64Email,
+    },
   });
 }
 
-authorize().then(listLabels).catch(console.error);
+authorize().then(startListener).catch(console.error);
